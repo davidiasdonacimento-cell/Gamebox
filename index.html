@@ -23,6 +23,16 @@ button,input,textarea,select{font:inherit}button{cursor:pointer;border:1px solid
 <button class="primary" id="generateBtn" style="width:100%">✦ Gerar jogo inicial</button>
 <div class="status" id="createStatus" aria-live="polite"></div>
 <div style="height:1px;background:var(--line);margin:17px 0"></div>
+<h3>🤖 Conectar IA (sem Gemini)</h3>
+<div class="field"><label for="aiProvider">Provedor</label><select id="aiProvider"><option value="openrouter">OpenRouter — vários modelos</option></select></div>
+<div class="field"><label for="aiKey">Sua chave API</label><input id="aiKey" type="password" autocomplete="off" placeholder="Cole sua chave OpenRouter"></div>
+<div class="field"><label for="aiModel">Modelo</label><input id="aiModel" value="openrouter/free" placeholder="openrouter/free"></div>
+<div class="hint">A chave fica somente nesta aba (não é enviada ao GitHub). A chamada vai diretamente ao OpenRouter. Não compartilhe sua chave nem publique prints dela. Modelos gratuitos podem ter limites.</div>
+<button id="connectAiBtn" class="green" style="width:100%;margin-top:10px">🔐 Salvar nesta aba e testar API</button>
+<div class="status" id="aiStatus" aria-live="polite"></div>
+<p class="hint"><a href="https://openrouter.ai/keys" target="_blank" rel="noopener" style="color:var(--cyan)">Abrir página de chaves OpenRouter</a> · <a href="https://openrouter.ai/models" target="_blank" rel="noopener" style="color:var(--cyan)">Ver modelos</a></p>
+<button id="aiGenerateBtn" class="primary" style="width:100%;margin-top:8px">✨ Gerar jogo com IA</button>
+<div style="height:1px;background:var(--line);margin:17px 0"></div>
 <h3>🚀 Começar por modelo</h3>
 <div class="templates">
 <button class="template" data-template="clicker"><span>🪙</span><span><strong>Coletor de moedas</strong><small>Toque para marcar pontos</small></span></button>
@@ -68,6 +78,39 @@ function renderProjects(){let list=readProjects();$("projects").innerHTML=list.l
 function createGame(kind){let title=$("gameName").value.trim()||"Meu jogo";let code=kind==="prompt"?makeFromPrompt($("prompt").value,title):templateCode(kind,title);setCurrent("g"+Date.now(),code,title);showStatus("createStatus","Jogo criado! Clique em Executar para testar.","ok");switchTab("preview")}
 function switchTab(tab){activeTab=tab;$("previewPane").hidden=tab!=="preview";$("codePane").hidden=tab!=="code";document.querySelectorAll("[data-tab]").forEach(b=>b.classList.toggle("active",b.dataset.tab===tab));if(tab==="code")$("codeEditor").value=currentCode}
 $("generateBtn").onclick=()=>{if(!$("prompt").value.trim())return showStatus("createStatus","Descreva sua ideia primeiro ou escolha um modelo.","err");createGame("prompt")};
+const AI_KEY_SESSION="gamebox.openrouter.key",AI_MODEL_SESSION="gamebox.openrouter.model";
+$("aiKey").value=sessionStorage.getItem(AI_KEY_SESSION)||"";
+$("aiModel").value=sessionStorage.getItem(AI_MODEL_SESSION)||"openrouter/free";
+async function callGameAI(userPrompt){
+ const key=$("aiKey").value.trim(),model=$("aiModel").value.trim()||"openrouter/free";
+ if(!key)throw new Error("Cole sua chave API antes de conectar.");
+ const response=await fetch("https://openrouter.ai/api/v1/chat/completions",{method:"POST",headers:{"Authorization":"Bearer "+key,"Content-Type":"application/json","X-OpenRouter-Title":"GAMEBOX"},body:JSON.stringify({model,messages:[{role:"system",content:"Você cria jogos web completos. Responda SOMENTE com um documento HTML completo, autocontido, com CSS e JavaScript internos. Crie um jogo realmente jogável, responsivo para celular, com instruções, pontuação e botão reiniciar. Não use bibliotecas externas, não faça chamadas de rede e não inclua explicações fora do HTML. Mantenha o jogo adequado para todas as idades."},{role:"user",content:"Crie este jogo: "+userPrompt+"\nNome do jogo: "+($("gameName").value.trim()||"Meu jogo")}],temperature:0.7,max_tokens:5000})});
+ const data=await response.json().catch(()=>({}));
+ if(!response.ok)throw new Error(data.error?.message||("A API respondeu HTTP "+response.status));
+ let answer=data.choices?.[0]?.message?.content;
+ if(Array.isArray(answer))answer=answer.map(x=>x.text||"").join("\n");
+ if(typeof answer!=="string"||!answer.trim())throw new Error("A IA não retornou o código do jogo.");
+ let html=answer.trim().replace(/^\`\`\`(?:html)?\s*/i,"").replace(/\s*\`\`\`$/,"");
+ if(!/<html[\s>]/i.test(html)||!/<body[\s>]/i.test(html))throw new Error("A resposta não veio como HTML completo. Tente novamente.");
+ return html;
+}
+$("connectAiBtn").onclick=async()=>{
+ const key=$("aiKey").value.trim(),model=$("aiModel").value.trim()||"openrouter/free";
+ if(!key)return showStatus("aiStatus","Cole sua chave API primeiro.","err");
+ $("connectAiBtn").disabled=true;showStatus("aiStatus","Testando conexão com OpenRouter...");
+ try{const resp=await fetch("https://openrouter.ai/api/v1/chat/completions",{method:"POST",headers:{"Authorization":"Bearer "+key,"Content-Type":"application/json","X-OpenRouter-Title":"GAMEBOX"},body:JSON.stringify({model,messages:[{role:"user",content:"Responda apenas: GAMEBOX conectado"}],max_tokens:20})});const data=await resp.json().catch(()=>({}));if(!resp.ok)throw new Error(data.error?.message||("HTTP "+resp.status));sessionStorage.setItem(AI_KEY_SESSION,key);sessionStorage.setItem(AI_MODEL_SESSION,model);showStatus("aiStatus","🟢 VERDE — API conectada nesta aba!","ok");}
+ catch(e){showStatus("aiStatus","❌ DEU RED! "+e.message,"err");}
+ finally{$("connectAiBtn").disabled=false;}
+};
+$("aiGenerateBtn").onclick=async()=>{
+ if(!$("prompt").value.trim())return showStatus("aiStatus","Descreva o jogo que deseja criar.","err");
+ const key=$("aiKey").value.trim();if(!key)return showStatus("aiStatus","Configure e teste sua chave API primeiro.","err");
+ $("aiGenerateBtn").disabled=true;showStatus("aiStatus","A IA está criando o jogo. Aguarde...");
+ try{const code=await callGameAI($("prompt").value.trim());sessionStorage.setItem(AI_KEY_SESSION,key);sessionStorage.setItem(AI_MODEL_SESSION,$("aiModel").value.trim()||"openrouter/free");const title=$("gameName").value.trim()||"Meu jogo com IA";setCurrent("g"+Date.now(),code,title);switchTab("preview");showStatus("aiStatus","🟢 VERDE — Jogo gerado pela IA! Clique em Executar para testar.","ok");}
+ catch(e){showStatus("aiStatus","❌ DEU RED! "+e.message,"err");}
+ finally{$("aiGenerateBtn").disabled=false;}
+};
+
 document.querySelectorAll("[data-template]").forEach(b=>b.onclick=()=>createGame(b.dataset.template));
 $("runBtn").onclick=()=>{if(activeTab==="code")currentCode=$("codeEditor").value;renderPreview();showStatus("createStatus","Prévia atualizada.","ok")};
 $("saveBtn").onclick=saveCurrent;
